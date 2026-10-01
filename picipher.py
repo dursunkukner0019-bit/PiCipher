@@ -1,153 +1,138 @@
-import streamlit as st
-from picipher import encrypt, decrypt
+import base64
+import hashlib
+import os
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
-st.set_page_config(
-    page_title="PiCipher",
-    page_icon="🔐",
-    layout="centered",
+VERSION = b"PC01"
+SALT_SIZE = 16
+NONCE_SIZE = 12
+KEY_SIZE = 32
+
+PI_DIGITS = (
+    "314159265358979323846264338327950288419716939937510"
+    "58209749445923078164062862089986280348253421170679"
 )
 
 
-st.title("🔐 PiCipher")
-st.subheader("π tabanlı güvenli metin şifreleme")
+def derive_key(password, salt):
+    if not password:
+        raise ValueError("Anahtar boş bırakılamaz.")
 
-st.info(
-    "Metninizi şifreleyin ve şifreli metni karşı tarafa "
-    "anahtarınızla birlikte güvenli şekilde iletin."
-)
+    password_bytes = password.encode("utf-8")
 
-
-st.markdown("### 🔑 Anahtar")
-
-password = st.text_input(
-    "Şifreleme anahtarı",
-    type="password",
-    placeholder="Örneğin: 1 veya güçlü bir parola",
-)
-
-
-tab1, tab2 = st.tabs(
-    ["🔒 Şifrele", "🔓 Şifre Çöz"]
-)
-
-
-with tab1:
-
-    st.markdown("### 📝 Metin")
-
-    text = st.text_area(
-        "Şifrelenecek metni yazın",
-        height=220,
-        placeholder="Mesajınızı buraya yazın...",
-        key="encrypt_text",
+    return hashlib.scrypt(
+        password_bytes,
+        salt=salt,
+        n=2**14,
+        r=8,
+        p=1,
+        dklen=KEY_SIZE,
     )
 
-    if st.button(
-        "🔒 METNİ ŞİFRELE",
-        use_container_width=True,
-    ):
 
-        if not password:
-            st.error("Lütfen bir anahtar girin.")
+def pi_mix(data):
+    result = bytearray()
 
-        elif not text:
-            st.error("Lütfen şifrelenecek metni girin.")
+    for i, value in enumerate(data):
+        digit = int(PI_DIGITS[i % len(PI_DIGITS)])
+        result.append((value + digit) % 256)
 
-        else:
-
-            try:
-
-                encrypted = encrypt(
-                    text,
-                    password,
-                )
-
-                st.success(
-                    "Metin başarıyla şifrelendi."
-                )
-
-                st.markdown("### 📦 Şifreli metin")
-
-                st.code(
-                    encrypted,
-                    language="text",
-                )
-
-                st.download_button(
-                    "⬇️ Şifreli metni kaydet",
-                    encrypted,
-                    file_name="picipher.txt",
-                    mime="text/plain",
-                    use_container_width=True,
-                )
-
-            except Exception as error:
-
-                st.error(
-                    f"Şifreleme hatası: {error}"
-                )
+    return bytes(result)
 
 
-with tab2:
+def pi_unmix(data):
+    result = bytearray()
 
-    st.markdown("### 📦 Şifreli metin")
+    for i, value in enumerate(data):
+        digit = int(PI_DIGITS[i % len(PI_DIGITS)])
+        result.append((value - digit) % 256)
 
-    encrypted_text = st.text_area(
-        "Şifreli metni buraya yapıştırın",
-        height=220,
-        placeholder="PiCipher şifreli metni buraya yapıştırın...",
-        key="decrypt_text",
+    return bytes(result)
+
+
+def encrypt(text, password):
+    salt = os.urandom(SALT_SIZE)
+    nonce = os.urandom(NONCE_SIZE)
+
+    key = derive_key(password, salt)
+
+    data = text.encode("utf-8")
+    data = pi_mix(data)
+
+    aes = AESGCM(key)
+
+    ciphertext = aes.encrypt(
+        nonce,
+        data,
+        VERSION,
     )
 
-    if st.button(
-        "🔓 ŞİFREYİ ÇÖZ",
-        use_container_width=True,
-    ):
+    packet = VERSION + salt + nonce + ciphertext
 
-        if not password:
-            st.error("Lütfen anahtarı girin.")
-
-        elif not encrypted_text:
-            st.error("Lütfen şifreli metni girin.")
-
-        else:
-
-            try:
-
-                decrypted = decrypt(
-                    encrypted_text.strip(),
-                    password,
-                )
-
-                st.success(
-                    "Şifre başarıyla çözüldü."
-                )
-
-                st.markdown("### 📝 Çözülmüş metin")
-
-                st.text_area(
-                    "Sonuç",
-                    decrypted,
-                    height=220,
-                    key="result_text",
-                )
-
-            except ValueError:
-
-                st.error(
-                    "❌ Anahtar yanlış veya şifreli veri değiştirilmiş."
-                )
-
-            except Exception as error:
-
-                st.error(
-                    f"Çözme hatası: {error}"
-                )
+    return base64.urlsafe_b64encode(packet).decode("ascii")
 
 
-st.divider()
+def decrypt(ciphertext, password):
+    try:
+        packet = base64.urlsafe_b64decode(
+            ciphertext.encode("ascii")
+        )
+    except Exception:
+        raise ValueError("Şifreli veri geçersiz.")
 
-st.caption(
-    "PiCipher • AES-256-GCM • Scrypt • π tabanlı katman"
-)
+    if not packet.startswith(VERSION):
+        raise ValueError("Geçersiz PiCipher verisi.")
+
+    position = len(VERSION)
+
+    salt = packet[
+        position:position + SALT_SIZE
+    ]
+
+    position += SALT_SIZE
+
+    nonce = packet[
+        position:position + NONCE_SIZE
+    ]
+
+    position += NONCE_SIZE
+
+    encrypted = packet[position:]
+
+    key = derive_key(password, salt)
+
+    aes = AESGCM(key)
+
+    try:
+        data = aes.decrypt(
+            nonce,
+            encrypted,
+            VERSION,
+        )
+    except Exception:
+        raise ValueError(
+            "Anahtar yanlış veya veri değiştirilmiş."
+        )
+
+    data = pi_unmix(data)
+
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError("Metin çözülemedi.")
+
+
+if __name__ == "__main__":
+    mesaj = "Merhaba PiCipher! Şifreleme testi."
+    anahtar = "1"
+
+    sifreli = encrypt(mesaj, anahtar)
+
+    print("Şifreli:")
+    print(sifreli)
+
+    print()
+    print("Çözülmüş:")
+    print(decrypt(sifreli, anahtar))
