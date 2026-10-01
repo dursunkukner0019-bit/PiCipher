@@ -1,285 +1,163 @@
-"""
-PiCipher v1
-Güvenli metin şifreleme motoru.
-
-- AES-256-GCM ile şifreleme
-- Scrypt ile parola -> anahtar dönüşümü
-- Rastgele salt ve nonce
-- Yanlış anahtarda çözme başarısız olur
-- UTF-8 / Türkçe karakter desteği
-- PiCipher için π tabanlı katman
-
-Not:
-π'nin kendisi gizli değildir. Güvenliği sağlayan ana mekanizma AES-256-GCM
-ve Scrypt'tir. π katmanı PiCipher'ın algoritmik özelliğidir.
-"""
-
-import base64
-import hashlib
-import os
-
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import streamlit as st
+from picipher import encrypt, decrypt
 
 
-# PiCipher'ın π dizisi.
-# Nokta kaldırılmıştır.
-PI_DIGITS = (
-    "314159265358979323846264338327950288419716939937510"
-    "58209749445923078164062862089986280348253421170679"
-    "82148086513282306647093844609550582231725359408128"
+st.set_page_config(
+    page_title="PiCipher",
+    page_icon="🔐",
+    layout="centered",
 )
 
 
-VERSION = b"PC01"
-SALT_SIZE = 16
-NONCE_SIZE = 12
-KEY_SIZE = 32
+st.title("🔐 PiCipher")
+st.subheader("π tabanlı güvenli metin şifreleme")
+
+st.info(
+    "Metninizi şifreleyin ve karşı tarafa şifreli metin ile "
+    "anahtarı ayrı olarak gönderin."
+)
 
 
-def pi_layer():
-    """
-    π basamaklarından PiCipher'a özel sabit bir katman üretir.
-    """
-    pi_bytes = PI_DIGITS.encode("ascii")
+# Anahtar
+st.markdown("### 🔑 Anahtar")
 
-    return hashlib.sha256(
-        b"PiCipher-PI-LAYER:" + pi_bytes
-    ).digest()
-
-
-PI_LAYER = pi_layer()
+password = st.text_input(
+    "Şifreleme anahtarı",
+    type="password",
+    placeholder="Örneğin: 1 veya güçlü bir parola",
+)
 
 
-def derive_key(password: str, salt: bytes) -> bytes:
-    """
-    Kullanıcının anahtarını Scrypt kullanarak
-    256-bit AES anahtarına dönüştürür.
+# İki işlem alanı
+tab1, tab2 = st.tabs(
+    ["🔒 Şifrele", "🔓 Şifre Çöz"]
+)
 
-    Örneğin anahtar '1' olabilir.
-    Gerçek kullanımda uzun ve rastgele bir parola önerilir.
-    """
 
-    if not isinstance(password, str):
-        raise TypeError("Anahtar metin biçiminde olmalıdır.")
+# -------------------------------------------------
+# ŞİFRELE
+# -------------------------------------------------
 
-    if password == "":
-        raise ValueError("Anahtar boş bırakılamaz.")
+with tab1:
 
-    # π katmanı KDF girdisine dahil edilir.
-    password_bytes = password.encode("utf-8") + PI_LAYER
+    st.markdown("### Şifrelenecek metin")
 
-    key = hashlib.scrypt(
-        password_bytes,
-        salt=salt,
-        n=2**14,
-        r=8,
-        p=1,
-        dklen=KEY_SIZE,
+    text = st.text_area(
+        "Metninizi yazın",
+        height=200,
+        placeholder="Buraya mesajınızı yazın...",
+        key="encrypt_text",
     )
 
-    return key
+    if st.button(
+        "🔒 METNİ ŞİFRELE",
+        use_container_width=True,
+    ):
+
+        if not password:
+            st.error("Lütfen bir anahtar girin.")
+
+        elif not text:
+            st.error("Lütfen şifrelenecek metni girin.")
+
+        else:
+
+            try:
+
+                encrypted = encrypt(
+                    text,
+                    password,
+                )
+
+                st.success(
+                    "Metin başarıyla şifrelendi."
+                )
+
+                st.markdown("### 📦 Şifreli metin")
+
+                st.code(
+                    encrypted,
+                    language="text",
+                )
+
+                st.download_button(
+                    "⬇️ Şifreli metni kaydet",
+                    encrypted,
+                    file_name="picipher.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                )
+
+            except Exception as error:
+
+                st.error(
+                    f"Şifreleme hatası: {error}"
+                )
 
 
-def pi_mix(data: bytes) -> bytes:
-    """
-    Veriyi π basamaklarıyla reversible şekilde karıştırır.
+# -------------------------------------------------
+# ŞİFRE ÇÖZ
+# -------------------------------------------------
 
-    Bu katman AES'in yerine geçmez.
-    PiCipher'ın π tabanlı tasarım katmanıdır.
-    """
+with tab2:
 
-    result = bytearray(len(data))
+    st.markdown("### Şifreli metin")
 
-    pi = PI_DIGITS
-
-    for i, value in enumerate(data):
-        digit = ord(pi[i % len(pi)]) - 48
-
-        # π basamağı ile reversible dönüşüm
-        result[i] = (value + digit) % 256
-
-    return bytes(result)
-
-
-def pi_unmix(data: bytes) -> bytes:
-    """
-    pi_mix işleminin tersidir.
-    """
-
-    result = bytearray(len(data))
-
-    pi = PI_DIGITS
-
-    for i, value in enumerate(data):
-        digit = ord(pi[i % len(pi)]) - 48
-
-        result[i] = (value - digit) % 256
-
-    return bytes(result)
-
-
-def encrypt(text: str, password: str) -> str:
-    """
-    Metni AES-256-GCM ile şifreler.
-
-    Dönen değer Base64 biçimindedir.
-    """
-
-    if not isinstance(text, str):
-        raise TypeError("Şifrelenecek veri metin olmalıdır.")
-
-    salt = os.urandom(SALT_SIZE)
-    nonce = os.urandom(NONCE_SIZE)
-
-    key = derive_key(password, salt)
-
-    # PiCipher π katmanı
-    plaintext = text.encode("utf-8")
-    mixed = pi_mix(plaintext)
-
-    # Şifreleme sırasında sürüm + π katmanı doğrulamaya dahil edilir.
-    aad = VERSION + PI_LAYER
-
-    aes = AESGCM(key)
-
-    ciphertext = aes.encrypt(
-        nonce,
-        mixed,
-        aad,
+    encrypted_text = st.text_area(
+        "Şifreli metni buraya yapıştırın",
+        height=200,
+        placeholder="PiCipher şifreli metni buraya yapıştırın...",
+        key="decrypt_text",
     )
 
-    # Dosya/mesaj formatı:
-    #
-    # PC01 | SALT | NONCE | CIPHERTEXT
-    #
-    packet = VERSION + salt + nonce + ciphertext
+    if st.button(
+        "🔓 ŞİFREYİ ÇÖZ",
+        use_container_width=True,
+    ):
 
-    return base64.urlsafe_b64encode(packet).decode("ascii")
+        if not password:
+            st.error("Lütfen anahtarı girin.")
 
+        elif not encrypted_text:
+            st.error("Lütfen şifreli metni girin.")
 
-def decrypt(ciphertext: str, password: str) -> str:
-    """
-    PiCipher şifreli metni çözer.
+        else:
 
-    Anahtar yanlışsa veya veri değiştirilmişse
-    hata verir.
-    """
+            try:
 
-    if not isinstance(ciphertext, str):
-        raise TypeError("Şifreli veri metin olmalıdır.")
+                decrypted = decrypt(
+                    encrypted_text.strip(),
+                    password,
+                )
 
-    try:
-        packet = base64.urlsafe_b64decode(
-            ciphertext.encode("ascii")
-        )
-    except Exception as exc:
-        raise ValueError("Şifreli veri geçersiz.") from exc
+                st.success(
+                    "Şifre başarıyla çözüldü."
+                )
 
-    minimum_size = (
-        len(VERSION)
-        + SALT_SIZE
-        + NONCE_SIZE
-        + 16
-    )
+                st.markdown("### 📝 Çözülmüş metin")
 
-    if len(packet) < minimum_size:
-        raise ValueError("Şifreli veri çok kısa veya bozuk.")
+                st.text_area(
+                    "Sonuç",
+                    decrypted,
+                    height=200,
+                    key="result_text",
+                )
 
-    version = packet[:4]
+            except ValueError:
 
-    if version != VERSION:
-        raise ValueError("Desteklenmeyen PiCipher sürümü.")
+                st.error(
+                    "❌ Anahtar yanlış veya şifreli veri değiştirilmiş."
+                )
 
-    position = len(VERSION)
+            except Exception as error:
 
-    salt = packet[
-        position:position + SALT_SIZE
-    ]
-
-    position += SALT_SIZE
-
-    nonce = packet[
-        position:position + NONCE_SIZE
-    ]
-
-    position += NONCE_SIZE
-
-    encrypted_data = packet[position:]
-
-    key = derive_key(password, salt)
-
-    aad = VERSION + PI_LAYER
-
-    aes = AESGCM(key)
-
-    try:
-        mixed = aes.decrypt(
-            nonce,
-            encrypted_data,
-            aad,
-        )
-    except Exception as exc:
-        raise ValueError(
-            "Anahtar yanlış veya şifreli veri değiştirilmiş."
-        ) from exc
-
-    try:
-        plaintext = pi_unmix(mixed)
-
-        return plaintext.decode("utf-8")
-
-    except UnicodeDecodeError as exc:
-        raise ValueError(
-            "Metin çözülemedi."
-        ) from exc
+                st.error(
+                    f"Çözme hatası: {error}"
+                )
 
 
-def test():
-    """
-    Temel otomatik test.
-    """
+st.divider()
 
-    mesaj = "Merhaba PiCipher! Türkçe karakterler: ç ğ ı ö ş ü"
-
-    anahtar = "1"
-
-    sifreli = encrypt(
-        mesaj,
-        anahtar,
-    )
-
-    cozulmus = decrypt(
-        sifreli,
-        anahtar,
-    )
-
-    assert cozulmus == mesaj
-
-    # Yanlış anahtarın çalışmaması gerekir.
-    try:
-        decrypt(
-            sifreli,
-            "2",
-        )
-
-        raise AssertionError(
-            "Yanlış anahtar kabul edildi!"
-        )
-
-    except ValueError:
-        pass
-
-    print("PiCipher testi başarılı.")
-    print()
-    print("Orijinal:")
-    print(mesaj)
-    print()
-    print("Şifreli:")
-    print(sifreli)
-    print()
-    print("Çözülmüş:")
-    print(cozulmus)
-
-
-if __name__ == "__main__":
-    test()
+st.caption(
+    "PiCipher • AES-256-GCM • Scrypt • π tabanlı katman"
+)
