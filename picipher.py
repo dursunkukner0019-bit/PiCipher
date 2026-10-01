@@ -13,12 +13,11 @@ st.title("🔐 PiCipher")
 st.subheader("π tabanlı güvenli metin şifreleme")
 
 st.info(
-    "Metninizi şifreleyin ve karşı tarafa şifreli metin ile "
-    "anahtarı ayrı olarak gönderin."
+    "Metninizi şifreleyin ve şifreli metni karşı tarafa "
+    "anahtarınızla birlikte güvenli şekilde iletin."
 )
 
 
-# Anahtar
 st.markdown("### 🔑 Anahtar")
 
 password = st.text_input(
@@ -28,24 +27,19 @@ password = st.text_input(
 )
 
 
-# İki işlem alanı
 tab1, tab2 = st.tabs(
     ["🔒 Şifrele", "🔓 Şifre Çöz"]
 )
 
 
-# -------------------------------------------------
-# ŞİFRELE
-# -------------------------------------------------
-
 with tab1:
 
-    st.markdown("### Şifrelenecek metin")
+    st.markdown("### 📝 Metin")
 
     text = st.text_area(
-        "Metninizi yazın",
-        height=200,
-        placeholder="Buraya mesajınızı yazın...",
+        "Şifrelenecek metni yazın",
+        height=220,
+        placeholder="Mesajınızı buraya yazın...",
         key="encrypt_text",
     )
 
@@ -95,17 +89,13 @@ with tab1:
                 )
 
 
-# -------------------------------------------------
-# ŞİFRE ÇÖZ
-# -------------------------------------------------
-
 with tab2:
 
-    st.markdown("### Şifreli metin")
+    st.markdown("### 📦 Şifreli metin")
 
     encrypted_text = st.text_area(
         "Şifreli metni buraya yapıştırın",
-        height=200,
+        height=220,
         placeholder="PiCipher şifreli metni buraya yapıştırın...",
         key="decrypt_text",
     )
@@ -139,7 +129,7 @@ with tab2:
                 st.text_area(
                     "Sonuç",
                     decrypted,
-                    height=200,
+                    height=220,
                     key="result_text",
                 )
 
